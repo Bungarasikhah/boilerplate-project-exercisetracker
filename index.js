@@ -85,10 +85,10 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 
     const saved = await newExercise.save();
 
-    res.json({
+        res.json({
       _id: user._id,
       username: user.username,
-      date: saved.date.toDateString(),
+      date: saved.date.toISOString().slice(0, 10),
       duration: saved.duration,
       description: saved.description
     });
@@ -125,16 +125,16 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 
     const exercises = await exerciseQuery.exec();
 
-    res.json({
+      res.json({
       _id: user._id,
       username: user.username,
       count: exercises.length,
       log: exercises.map(e => ({
         description: e.description,
         duration: e.duration,
-        date: new Date(e.date).toDateString()
+        date: new Date(e.date).toISOString().slice(0, 10)
       }))
-    });
+    })
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
