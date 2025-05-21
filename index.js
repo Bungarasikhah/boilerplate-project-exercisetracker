@@ -1,146 +1,97 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const mongoose = require('mongoose');
-const app = express();
+require('dotenv').config()
+const express = require('express')
+const app = express()
+const cors = require('cors')
 
-app.use(cors());
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
-app.use(express.static('public')); // untuk serving index.html jika ada
-
-const PORT = process.env.PORT || 3003;
-
-// --- MongoDB connection ---
-mongoose.connect(process.env.MONGO_URI)
-
-// --- Schemas & Models ---
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true }
-});
-
-const User = mongoose.model('User', userSchema);
-
-const exerciseSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  description: { type: String, required: true },
-  duration: { type: Number, required: true },
-  date: { type: Date, required: true }
-});
-
-const Exercise = mongoose.model('Exercise', exerciseSchema);
-
-// --- Routes ---
-
-// Home (optional)
-const path = require('path');
+app.use(cors())
+app.use(express.static('public'))
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'views', 'index.html'));
+  res.sendFile(__dirname + '/views/index.html')
 });
 
-// POST /api/users - Create user
-app.post('/api/users', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username is required' });
+let users = [];
+let exercises = {};
 
-  try {
-    const user = new User({ username });
-    const saved = await user.save();
-    res.json({ username: saved.username, _id: saved._id });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+// POST /api/users 
+app.post('/api/users', express.urlencoded({ extended: false }), (req, res) => {
+  const username = req.body.username;
+  const newUser = {
+    username,
+    _id: generateId()
+  };
+  users.push(newUser);
+  exercises[newUser._id] = [];
+  res.json(newUser);
 });
 
-// GET /api/users - List users
-app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find({}, 'username _id');
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+// GET /api/users
+app.get('/api/users', (req, res) => {
+  res.json(users);
 });
 
-// POST /api/users/:_id/exercises - Add exercise
-app.post('/api/users/:_id/exercises', async (req, res) => {
-  const { _id } = req.params;
+// POST /api/users/:_id/exercises
+app.post('/api/users/:_id/exercises', express.urlencoded({ extended: false }), (req, res) => {
+  const userId = req.params._id;
   const { description, duration, date } = req.body;
 
-  if (!description || !duration) {
-    return res.status(400).json({ error: 'Description and duration are required' });
-  }
+  const user = users.find(u => u._id === userId);
+  if (!user) return res.status(400).json({ error: 'User not found' });
 
-  try {
-    const user = await User.findById(_id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+  const exerciseDate = date ? new Date(date) : new Date();
+  const exercise = {
+    description,
+    duration: parseInt(duration),
+    date: exerciseDate.toDateString()
+  };
 
-    const parsedDate = date ? new Date(date) : new Date();
-    const newExercise = new Exercise({
-      userId: user._id,
-      description,
-      duration: parseInt(duration),
-      date: parsedDate
-    });
+  exercises[userId].push(exercise);
 
-    const saved = await newExercise.save();
-
-        res.json({
-      _id: user._id,
-      username: user.username,
-      date: saved.date.toISOString().slice(0, 10),
-      duration: saved.duration,
-      description: saved.description
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  res.json({
+    username: user.username,
+    description: exercise.description,
+    duration: exercise.duration,
+    date: exercise.date,
+    _id: user._id
+  });
 });
 
-// GET /api/users/:_id/logs - Get user logs
-app.get('/api/users/:_id/logs', async (req, res) => {
-  const { _id } = req.params;
+// GET /api/users/:_id/logs
+app.get('/api/users/:_id/logs', (req, res) => {
+  const userId = req.params._id;
+  const user = users.find(u => u._id === userId);
+  if (!user) return res.status(400).json({ error: 'User not found' });
+
+  let log = exercises[userId] || [];
+
   const { from, to, limit } = req.query;
 
-  try {
-    const user = await User.findById(_id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const query = { userId: _id };
-
-    if (from || to) {
-      query.date = {};
-      if (from) query.date.$gte = new Date(from);
-      if (to) query.date.$lte = new Date(to);
-    }
-
-    let exerciseQuery = Exercise.find(query).select('description duration date');
-
-    if (limit) {
-      const parsedLimit = parseInt(limit);
-      if (!isNaN(parsedLimit)) {
-        exerciseQuery = exerciseQuery.limit(parsedLimit);
-      }
-    }
-
-    const exercises = await exerciseQuery.exec();
-
-      res.json({
-      _id: user._id,
-      username: user.username,
-      count: exercises.length,
-      log: exercises.map(e => ({
-        description: e.description,
-        duration: e.duration,
-        date: new Date(e.date).toISOString().slice(0, 10)
-      }))
-    })
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+  if (from) {
+    const fromDate = new Date(from);
+    log = log.filter(ex => new Date(ex.date) >= fromDate);
   }
+
+  if (to) {
+    const toDate = new Date(to);
+    log = log.filter(ex => new Date(ex.date) <= toDate);
+  }
+
+  if (limit) {
+    log = log.slice(0, parseInt(limit));
+  }
+
+  res.json({
+    username: user.username,
+    count: log.length,
+    _id: user._id,
+    log: log
+  });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Function buat generate ID random
+function generateId() {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+const listener = app.listen(process.env.PORT || 3004, () => {
+  console.log('Your app is listening on port ' + listener.address().port)
+})
